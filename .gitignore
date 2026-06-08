@@ -1,9 +1,35 @@
+# Xcode
+xcuserdata/
+*.hmap
+*.xcodeproj/
+*.xcworkspace/
+
+# Swift Package Manager
 .build/
+
+# App packaging
 dist/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Local generated icon assets
 Resources/AppIcon.debug.iconset/
 Resources/AppIcon.iconset/
 Resources/AppIcon-1024.png
+
+# macOS
 .DS_Store
-*.xcodeproj/
-*.xcworkspace/
-xcuserdata/
+
+# Carthage
+Carthage/Build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
