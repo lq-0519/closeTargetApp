@@ -1,0 +1,9 @@
+.build/
+dist/
+Resources/AppIcon.debug.iconset/
+Resources/AppIcon.iconset/
+Resources/AppIcon-1024.png
+.DS_Store
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
