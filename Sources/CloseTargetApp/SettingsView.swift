@@ -18,7 +18,7 @@ struct SettingsView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("一键关闭目标")
+                Text("目标应用")
                     .font(.headline)
                 Text("\(store.targetApplications.count) 个应用")
                     .font(.caption)

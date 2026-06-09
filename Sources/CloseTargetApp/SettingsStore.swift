@@ -29,7 +29,7 @@ final class SettingsStore: ObservableObject {
 
     func addApplicationFromPanel() {
         let panel = NSOpenPanel()
-        panel.title = "选择要一键关闭的应用"
+        panel.title = "选择要关闭的应用"
         panel.prompt = "添加"
         panel.allowsMultipleSelection = true
         panel.canChooseFiles = true

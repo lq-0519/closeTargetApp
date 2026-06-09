@@ -6,7 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWindowController: SettingsWindowController?
     private var recentStatusText: String?
-    private var isClosingApplications = false
+    private var activePowerAction: PowerAction?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store.onChange = { [weak self] in
@@ -33,15 +33,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        let closeItem = NSMenuItem(
-            title: isClosingApplications ? "正在关闭..." : "一键关闭指定软件",
-            action: #selector(closeTargetApplications),
-            keyEquivalent: ""
-        )
-        closeItem.target = self
-        closeItem.isEnabled = !isClosingApplications
-        closeItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
-        menu.addItem(closeItem)
+        for action in PowerAction.allCases {
+            let item = NSMenuItem(
+                title: activePowerAction == action ? "正在\(action.shortTitle)..." : action.shortTitle,
+                action: #selector(performPowerActionFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = action.rawValue
+            item.isEnabled = activePowerAction == nil
+            item.image = NSImage(systemSymbolName: action.systemImageName, accessibilityDescription: nil)
+            menu.addItem(item)
+        }
 
         if !store.targetApplications.isEmpty {
             let targetMenu = NSMenu()
@@ -85,22 +88,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
-    @objc private func closeTargetApplications() {
-        guard !store.targetApplications.isEmpty else {
-            recentStatusText = "请先在设置里添加目标应用"
-            openSettings()
-            rebuildMenu()
+    @objc private func performPowerActionFromMenu(_ sender: NSMenuItem) {
+        guard
+            activePowerAction == nil,
+            let rawValue = sender.representedObject as? String,
+            let action = PowerAction(rawValue: rawValue)
+        else {
             return
         }
 
-        isClosingApplications = true
+        closeTargetsThenPerform(action)
+    }
+
+    private func closeTargetsThenPerform(_ action: PowerAction) {
+        activePowerAction = action
         recentStatusText = nil
         rebuildMenu()
 
         Task { @MainActor in
-            let result = await TargetApplicationTerminator.close(store.targetApplications)
-            recentStatusText = result.summaryText
-            isClosingApplications = false
+            if store.targetApplications.isEmpty {
+                recentStatusText = "没有配置目标应用，直接执行\(action.shortTitle)"
+            } else {
+                let result = await TargetApplicationTerminator.close(store.targetApplications)
+                recentStatusText = result.summaryText
+            }
+
+            do {
+                try await PowerActionExecutor.perform(action)
+                recentStatusText = "已发送\(action.title)请求"
+            } catch {
+                recentStatusText = "\(action.title)失败：\(error.localizedDescription)"
+            }
+
+            activePowerAction = nil
             rebuildMenu()
         }
     }
