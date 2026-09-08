@@ -111,6 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 let result = await TargetApplicationTerminator.close(store.targetApplications)
                 recentStatusText = result.summaryText
+
+                guard result.stillRunningApplications.isEmpty else {
+                    activePowerAction = nil
+                    rebuildMenu()
+                    return
+                }
             }
 
             do {

@@ -3,6 +3,10 @@ set -euo pipefail
 
 APP_NAME="CloseTargetApp"
 BUNDLE_IDENTIFIER="com.local.CloseTargetApp"
+# 固定使用本机已有的长期代码签名证书指纹，使不同构建版本拥有相同的 Designated Requirement。
+# 如需在另一台机器构建，可以显式设置 CLOSE_TARGET_APP_SIGNING_IDENTITY 覆盖该身份。
+DEFAULT_SIGNING_IDENTITY="659A2CD838DF7ADCB88F313BDE6572A223C4923C"
+SIGNING_IDENTITY="${CLOSE_TARGET_APP_SIGNING_IDENTITY:-$DEFAULT_SIGNING_IDENTITY}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -13,10 +17,18 @@ ICON_FILE="CloseTargetApp.icns"
 
 cd "$ROOT_DIR"
 
+if ! security find-identity -v -p codesigning | grep -Fq "$SIGNING_IDENTITY"; then
+    echo "Missing code signing identity: $SIGNING_IDENTITY" >&2
+    echo "Set CLOSE_TARGET_APP_SIGNING_IDENTITY to a stable local code signing identity." >&2
+    exit 1
+fi
+
 swift build -c release
 BUILD_DIR="$(swift build -c release --show-bin-path)"
 
-rm -rf "$APP_DIR"
+if [[ -e "$APP_DIR" ]]; then
+    /usr/bin/trash "$APP_DIR"
+fi
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
@@ -62,6 +74,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP_DIR" >/dev/null
+codesign --force --deep --timestamp=none --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null
+codesign --verify --deep --strict "$APP_DIR"
 
-echo "Built: $APP_DIR"
+echo "Built and signed with identity $SIGNING_IDENTITY: $APP_DIR"
