@@ -9,8 +9,8 @@ final class SettingsWindowController: NSWindowController {
         let window = NSWindow(contentViewController: hostingController)
 
         window.title = "CloseTargetApp 设置"
-        window.setContentSize(NSSize(width: 640, height: 460))
-        window.minSize = NSSize(width: 520, height: 360)
+        window.setContentSize(NSSize(width: 680, height: 600))
+        window.minSize = NSSize(width: 580, height: 480)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.center()

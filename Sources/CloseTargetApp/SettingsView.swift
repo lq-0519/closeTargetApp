@@ -8,11 +8,37 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            powerOptions
+            Divider()
             applicationList
             Divider()
             footer
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: 580, minHeight: 480)
+    }
+
+    /// 电源操作的持久化选项；等待时间是上限，Wi-Fi 开关仅影响本应用按钮。
+    private var powerOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Stepper(value: Binding(
+                get: { store.terminationTimeoutSeconds },
+                set: { store.setTerminationTimeoutSeconds($0) }
+            ), in: SettingsStore.terminationTimeoutRange) {
+                Text("关闭应用最多等待：\(store.terminationTimeoutSeconds) 秒")
+            }
+            Text("可设置 1–60 秒；所有目标应用退出后立即继续，超时则取消电源操作。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("电源操作前关闭 Wi-Fi，唤醒或登录后打开", isOn: Binding(
+                get: { store.managesWiFi },
+                set: { store.setManagesWiFi($0) }
+            ))
+            Text("仅对本软件的睡眠、关机、重启按钮生效。后台唤醒不恢复 Wi-Fi；重启后需登录并自启动。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
     }
 
     private var header: some View {
@@ -108,6 +134,8 @@ struct SettingsView: View {
                         set: { store.setLaunchAtLogin($0) }
                     )
                 )
+                .disabled(store.managesWiFi)
+                .help(store.managesWiFi ? "Wi-Fi 自动恢复需要登录自启动；关闭该功能后可关闭自启动。" : "登录后启动菜单栏应用")
                 Text(store.launchAtLoginStatusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)

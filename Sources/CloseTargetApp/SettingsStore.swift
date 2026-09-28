@@ -5,6 +5,15 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class SettingsStore: ObservableObject {
+    /// 用户可选择的退出等待秒数范围；仅限制一次电源操作，平时不会启动计时器。
+    static let terminationTimeoutRange = 1...60
+
+    /// 强制退出后确认目标进程消失的最长秒数；应用提前退出时立即继续，不固定等待。
+    @Published private(set) var terminationTimeoutSeconds: Int
+
+    /// 是否仅对本软件发起的电源操作管理 Wi-Fi；不接管合盖或系统菜单的睡眠。
+    @Published private(set) var managesWiFi: Bool
+
     @Published private(set) var targetApplications: [TargetApplication] = [] {
         didSet {
             saveTargetApplications()
@@ -23,8 +32,36 @@ final class SettingsStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let savedTimeout = defaults.object(forKey: "terminationTimeoutSeconds") as? Int ?? 5
+        self.terminationTimeoutSeconds = min(max(savedTimeout, Self.terminationTimeoutRange.lowerBound), Self.terminationTimeoutRange.upperBound)
+        self.managesWiFi = defaults.object(forKey: "managesWiFi") as? Bool ?? true
         self.targetApplications = Self.loadTargetApplications(from: defaults, key: targetApplicationsKey)
         refreshLaunchAtLoginStatus()
+    }
+
+    /// 保存经过范围约束的等待时间，下一次点击电源按钮时生效。
+    func setTerminationTimeoutSeconds(_ seconds: Int) {
+        terminationTimeoutSeconds = min(max(seconds, Self.terminationTimeoutRange.lowerBound), Self.terminationTimeoutRange.upperBound)
+        defaults.set(terminationTimeoutSeconds, forKey: "terminationTimeoutSeconds")
+        onChange?()
+    }
+
+    /// 保存 Wi-Fi 功能开关；启用时注册现有登录项，供关机或重启后的恢复使用。
+    func setManagesWiFi(_ enabled: Bool) {
+        managesWiFi = enabled
+        defaults.set(enabled, forKey: "managesWiFi")
+        if enabled {
+            ensureRecoveryLaunchAtLogin()
+        }
+        onChange?()
+    }
+
+    /// 只在启用功能或应用启动时检查登录项，不使用后台轮询；系统拒绝时保留真实状态。
+    func ensureRecoveryLaunchAtLogin() {
+        refreshLaunchAtLoginStatus()
+        if managesWiFi && !launchAtLoginEnabled {
+            setLaunchAtLogin(true)
+        }
     }
 
     func addApplicationFromPanel() {

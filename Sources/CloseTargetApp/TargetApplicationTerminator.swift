@@ -21,20 +21,16 @@ struct CloseTargetApplicationsResult {
 
 @MainActor
 enum TargetApplicationTerminator {
-    /// 强制退出请求发出后等待目标应用完全退出的最长时间。
-    ///
-    /// `NSRunningApplication.forceTerminate()` 只表示系统接受了强制退出请求，并不保证
-    /// 方法返回时进程已经消失，因此必须在执行睡眠、关机或重启前继续确认运行状态。
-    private static let forceTerminationTimeout: TimeInterval = 5
-
-    /// 等待强制退出完成时的轮询间隔，较短间隔可以减少所有应用退出后的额外等待时间。
-    private static let forceTerminationPollingIntervalNanoseconds: UInt64 = 100_000_000
+    /// 仅在用户发起退出操作后每 250ms 检查一次进程；空闲时不轮询。
+    private static let forceTerminationPollingIntervalNanoseconds: UInt64 = 250_000_000
 
     /// 强制退出当前正在运行的目标应用，并等待这些应用从系统运行列表中消失。
     ///
-    /// - Parameter applications: 用户配置的目标应用列表。
+    /// - Parameters:
+    ///   - applications: 用户配置的目标应用列表。
+    ///   - timeoutSeconds: 本次操作开始时取得的最长等待秒数，进程提前退出会立即继续。
     /// - Returns: 强制退出请求、原本未运行的应用，以及等待超时后仍在运行的应用汇总。
-    static func close(_ applications: [TargetApplication]) async -> CloseTargetApplicationsResult {
+    static func close(_ applications: [TargetApplication], timeoutSeconds: Int) async -> CloseTargetApplicationsResult {
         var requestedApplications: [String] = []
         var notRunningApplications: [String] = []
         var runningApplicationsByTarget: [(TargetApplication, [NSRunningApplication])] = []
@@ -56,7 +52,7 @@ enum TargetApplicationTerminator {
         }
 
         let requestedTargets = runningApplicationsByTarget.map { $0.0 }
-        let stillRunningApplications = await waitForApplicationsToTerminate(requestedTargets)
+        let stillRunningApplications = await waitForApplicationsToTerminate(requestedTargets, timeoutSeconds: timeoutSeconds)
 
         return CloseTargetApplicationsResult(
             requestedApplications: requestedApplications,
@@ -67,17 +63,20 @@ enum TargetApplicationTerminator {
 
     /// 持续按 Bundle ID 和应用路径重新查询运行状态，避免只检查旧 PID 而漏掉自动拉起的新进程。
     ///
-    /// - Parameter applications: 已经发送强制退出请求的目标应用。
+    /// - Parameters:
+    ///   - applications: 已经发送强制退出请求的目标应用。
+    ///   - timeoutSeconds: 最长等待秒数；使用单调时钟，系统时间校准不会延长等待。
     /// - Returns: 全部退出时返回空数组；超时则返回仍在运行的目标应用名称。
-    private static func waitForApplicationsToTerminate(_ applications: [TargetApplication]) async -> [String] {
-        let deadline = Date().addingTimeInterval(forceTerminationTimeout)
+    private static func waitForApplicationsToTerminate(_ applications: [TargetApplication], timeoutSeconds: Int) async -> [String] {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeoutSeconds))
 
         while true {
             let stillRunningApplications = applications.compactMap { application in
                 findRunningApplications(for: application).isEmpty ? nil : application.displayName
             }
 
-            if stillRunningApplications.isEmpty || Date() >= deadline {
+            if stillRunningApplications.isEmpty || clock.now >= deadline || Task.isCancelled {
                 return stillRunningApplications
             }
 
