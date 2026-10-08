@@ -11,8 +11,14 @@ final class SettingsStore: ObservableObject {
     /// 强制退出后确认目标进程消失的最长秒数；应用提前退出时立即继续，不固定等待。
     @Published private(set) var terminationTimeoutSeconds: Int
 
-    /// 是否仅对本软件发起的电源操作管理 Wi-Fi；不接管合盖或系统菜单的睡眠。
-    @Published private(set) var managesWiFi: Bool
+    /// 软件电源操作与合盖睡眠的无线管理总开关；开盖空闲睡眠不受影响。
+    @Published private(set) var managesRadios: Bool
+
+    /// 自动恢复 Wi-Fi 与蓝牙后显示一次无声通知，默认开启且独立于无线管理总开关保存。
+    @Published private(set) var notifiesRadioRecovery: Bool
+
+    /// 显示系统通知权限与发送失败；仅由通知事件更新，不轮询系统设置。
+    @Published var recoveryNotificationStatusText = ""
 
     @Published private(set) var targetApplications: [TargetApplication] = [] {
         didSet {
@@ -34,7 +40,8 @@ final class SettingsStore: ObservableObject {
         self.defaults = defaults
         let savedTimeout = defaults.object(forKey: "terminationTimeoutSeconds") as? Int ?? 5
         self.terminationTimeoutSeconds = min(max(savedTimeout, Self.terminationTimeoutRange.lowerBound), Self.terminationTimeoutRange.upperBound)
-        self.managesWiFi = defaults.object(forKey: "managesWiFi") as? Bool ?? true
+        self.managesRadios = defaults.object(forKey: "managesRadios") as? Bool ?? defaults.object(forKey: "managesWiFi") as? Bool ?? true
+        self.notifiesRadioRecovery = defaults.object(forKey: "notifiesRadioRecovery") as? Bool ?? true
         self.targetApplications = Self.loadTargetApplications(from: defaults, key: targetApplicationsKey)
         refreshLaunchAtLoginStatus()
     }
@@ -46,20 +53,27 @@ final class SettingsStore: ObservableObject {
         onChange?()
     }
 
-    /// 保存 Wi-Fi 功能开关；启用时注册现有登录项，供关机或重启后的恢复使用。
-    func setManagesWiFi(_ enabled: Bool) {
-        managesWiFi = enabled
-        defaults.set(enabled, forKey: "managesWiFi")
+    /// 保存双无线功能总开关；启用时注册现有登录项，供关机或重启后的恢复使用。
+    func setManagesRadios(_ enabled: Bool) {
+        managesRadios = enabled
+        defaults.set(enabled, forKey: "managesRadios")
         if enabled {
             ensureRecoveryLaunchAtLogin()
         }
         onChange?()
     }
 
+    /// 保存通知偏好并通知 AppDelegate 更新权限；不触发无线开关或改变现有登录项。
+    func setNotifiesRadioRecovery(_ enabled: Bool) {
+        notifiesRadioRecovery = enabled
+        defaults.set(enabled, forKey: "notifiesRadioRecovery")
+        onChange?()
+    }
+
     /// 只在启用功能或应用启动时检查登录项，不使用后台轮询；系统拒绝时保留真实状态。
     func ensureRecoveryLaunchAtLogin() {
         refreshLaunchAtLoginStatus()
-        if managesWiFi && !launchAtLoginEnabled {
+        if managesRadios && !launchAtLoginEnabled {
             setLaunchAtLogin(true)
         }
     }

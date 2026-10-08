@@ -17,7 +17,7 @@ struct SettingsView: View {
         .frame(minWidth: 580, minHeight: 480)
     }
 
-    /// 电源操作的持久化选项；等待时间是上限，Wi-Fi 开关仅影响本应用按钮。
+    /// 电源操作的持久化选项；等待时间是上限，无线总开关覆盖软件操作和合盖睡眠。
     private var powerOptions: some View {
         VStack(alignment: .leading, spacing: 10) {
             Stepper(value: Binding(
@@ -29,11 +29,21 @@ struct SettingsView: View {
             Text("可设置 1–60 秒；所有目标应用退出后立即继续，超时则取消电源操作。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Toggle("电源操作前关闭 Wi-Fi，唤醒或登录后打开", isOn: Binding(
-                get: { store.managesWiFi },
-                set: { store.setManagesWiFi($0) }
+            Toggle("睡眠时自动关闭 Wi-Fi 和蓝牙，正常唤醒后打开", isOn: Binding(
+                get: { store.managesRadios },
+                set: { store.setManagesRadios($0) }
             ))
-            Text("仅对本软件的睡眠、关机、重启按钮生效。后台唤醒不恢复 Wi-Fi；重启后需登录并自启动。")
+            Text("适用于软件的睡眠、关机、重启及合盖睡眠。开盖闲置自动睡眠不操作；后台唤醒保持关闭，重启后登录恢复。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("无线恢复后通知", isOn: Binding(
+                get: { store.notifiesRadioRecovery },
+                set: { store.setNotifiesRadioRecovery($0) }
+            ))
+            Text(store.recoveryNotificationStatusText.isEmpty
+                 ? "Wi-Fi 和蓝牙自动恢复成功后显示一条无声通知。"
+                 : store.recoveryNotificationStatusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -134,8 +144,8 @@ struct SettingsView: View {
                         set: { store.setLaunchAtLogin($0) }
                     )
                 )
-                .disabled(store.managesWiFi)
-                .help(store.managesWiFi ? "Wi-Fi 自动恢复需要登录自启动；关闭该功能后可关闭自启动。" : "登录后启动菜单栏应用")
+                .disabled(store.managesRadios)
+                .help(store.managesRadios ? "无线自动恢复需要登录自启动；关闭该功能后可关闭自启动。" : "登录后启动菜单栏应用")
                 Text(store.launchAtLoginStatusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)

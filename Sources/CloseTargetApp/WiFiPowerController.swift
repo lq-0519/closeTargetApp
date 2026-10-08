@@ -32,7 +32,7 @@ enum WiFiPowerError: LocalizedError {
         switch self {
         case .interfaceUnavailable: return "Wi-Fi 接口暂不可用"
         case .stateNotConfirmed: return "未能确认 Wi-Fi 开关状态"
-        case .recoveryPending: return "上次 Wi-Fi 恢复尚未完成，请先点击“恢复 Wi-Fi”"
+        case .recoveryPending: return "上次无线恢复尚未完成，请先点击“恢复 Wi-Fi 和蓝牙”"
         }
     }
 }
@@ -46,22 +46,29 @@ actor WiFiPowerController: WiFiPowerControlling {
 
     /// 动态获取默认接口；只读取电源状态，不申请网络扫描权限。
     func snapshot() async throws -> WiFiPowerSnapshot {
+        try Task.checkCancellation()
         guard let interface = client.interface(), let name = interface.interfaceName else {
             throw WiFiPowerError.interfaceUnavailable
         }
-        return WiFiPowerSnapshot(interfaceName: name, powerOn: interface.powerOn())
+        let enabled = interface.powerOn()
+        try Task.checkCancellation()
+        return WiFiPowerSnapshot(interfaceName: name, powerOn: enabled)
     }
 
     /// 切换接口电源并在最多一秒内读回确认；这些短期检查只发生在用户操作或恢复时。
     func setPower(_ enabled: Bool, interfaceName: String) async throws {
+        try Task.checkCancellation()
         guard let interface = client.interface(withName: interfaceName) else {
             throw WiFiPowerError.interfaceUnavailable
         }
         do {
-            if interface.powerOn() != enabled {
+            let initial = interface.powerOn()
+            try Task.checkCancellation()
+            if initial != enabled {
                 try interface.setPower(enabled)
             }
             for attempt in 0..<6 {
+                try Task.checkCancellation()
                 if interface.powerOn() == enabled {
                     logger.info("Wi-Fi interface=\(interfaceName, privacy: .public) power=\(enabled)")
                     return

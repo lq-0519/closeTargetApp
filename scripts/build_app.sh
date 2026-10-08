@@ -68,6 +68,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>睡眠前关闭蓝牙以减少后台唤醒，并在正常唤醒后恢复蓝牙。</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

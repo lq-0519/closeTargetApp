@@ -7,28 +7,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var recentStatusText: String?
     private var activePowerAction: PowerAction?
-    /// Wi-Fi 恢复与窗口同生命周期；只处理本软件发起的操作，不常驻轮询系统状态。
-    private let wifiRecovery = WiFiRecoveryCoordinator()
+    /// 与恢复凭据无关的命令发送标记，关闭总开关时也能识别软件自身的睡眠请求。
+    private var powerCommandIssued = false
+    /// 系统在关闭应用或无线设备期间抢先睡眠时，取消未发出的软件电源请求。
+    private var powerActionTask: Task<Void, Never>?
+    /// 双无线恢复与事件监听同生命周期，处理软件操作与合盖，不常驻轮询。
+    private lazy var radioRecovery = RadioRecoveryCoordinator(isEnabled: { [weak store] in store?.managesRadios ?? false })
+    /// 系统本地通知与应用同生命周期；通知偏好实时检查，发送过程不阻塞无线恢复。
+    private lazy var recoveryNotifications = RadioRecoveryNotifier(isEnabled: { [weak store] in store?.notifiesRadioRecovery ?? false })
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store.onChange = { [weak self] in
+            self?.radioRecovery.initializeIfEnabled()
+            self?.recoveryNotifications.updatePreference()
             self?.rebuildMenu()
         }
 
         configureStatusItem()
-        wifiRecovery.onStatusChange = { [weak self] message in
+        recoveryNotifications.onStatusChange = { [weak store] in store?.recoveryNotificationStatusText = $0 }
+        recoveryNotifications.onOpenSettings = { [weak self] in self?.openSettings() }
+        recoveryNotifications.updatePreference()
+        radioRecovery.onStatusChange = { [weak self] message in
             self?.recentStatusText = message
             self?.rebuildMenu()
         }
-        wifiRecovery.onStateChange = { [weak self] in self?.rebuildMenu() }
+        radioRecovery.onStateChange = { [weak self] in self?.rebuildMenu() }
+        radioRecovery.onAutomaticRecoveryComplete = { [weak self] in self?.recoveryNotifications.notifyRecovery(identifier: $0) }
+        radioRecovery.onUnrequestedSleep = { [weak self] in
+            guard let self, !self.powerCommandIssued else { return nil }
+            self.powerActionTask?.cancel()
+            return self.powerActionTask
+        }
         store.ensureRecoveryLaunchAtLogin()
-        wifiRecovery.start()
+        radioRecovery.start()
         rebuildMenu()
     }
 
-    /// 系统关机时仅撤销监听，保留磁盘凭据给下次登录，不在退出回调中重新打开 Wi-Fi。
+    /// 系统关机时仅撤销监听，保留磁盘凭据给下次登录，不在退出回调中重新打开无线设备。
     func applicationWillTerminate(_ notification: Notification) {
-        wifiRecovery.stop()
+        powerActionTask?.cancel()
+        radioRecovery.stop()
     }
 
     /// 用户从访达再次打开菜单栏应用时显示设置；登录自启动仍保持安静，不弹窗口。
@@ -61,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             item.target = self
             item.representedObject = action.rawValue
-            item.isEnabled = activePowerAction == nil && !wifiRecovery.isBusy && wifiRecovery.pendingRecord == nil
+            item.isEnabled = activePowerAction == nil && !radioRecovery.isBusy && radioRecovery.pendingRecord == nil
             item.image = NSImage(systemSymbolName: action.systemImageName, accessibilityDescription: nil)
             menu.addItem(item)
         }
@@ -86,10 +104,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(statusItem)
         }
 
-        if wifiRecovery.pendingRecord != nil {
-            let restoreItem = NSMenuItem(title: "恢复 Wi-Fi", action: #selector(restoreWiFi), keyEquivalent: "")
+        if radioRecovery.pendingRecord != nil {
+            let restoreItem = NSMenuItem(title: "恢复 Wi-Fi 和蓝牙", action: #selector(restoreRadios), keyEquivalent: "")
             restoreItem.target = self
-            restoreItem.isEnabled = activePowerAction == nil && !wifiRecovery.isBusy
+            restoreItem.isEnabled = activePowerAction == nil && !radioRecovery.isBusy
             menu.addItem(restoreItem)
         }
 
@@ -98,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let loginItem = NSMenuItem(title: "开机自启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = store.launchAtLoginEnabled ? .on : .off
-        loginItem.isEnabled = !store.managesWiFi
+        loginItem.isEnabled = !store.managesRadios
         loginItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
         menu.addItem(loginItem)
 
@@ -111,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let quitItem = NSMenuItem(title: "退出 CloseTargetApp", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
-        quitItem.isEnabled = activePowerAction == nil && !wifiRecovery.isBusy
+        quitItem.isEnabled = activePowerAction == nil && !radioRecovery.isBusy
         menu.addItem(quitItem)
 
         statusItem?.menu = menu
@@ -119,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func performPowerActionFromMenu(_ sender: NSMenuItem) {
         guard
-            activePowerAction == nil, !wifiRecovery.isBusy, wifiRecovery.pendingRecord == nil,
+            activePowerAction == nil, !radioRecovery.isBusy, radioRecovery.pendingRecord == nil,
             let rawValue = sender.representedObject as? String,
             let action = PowerAction(rawValue: rawValue)
         else {
@@ -132,53 +150,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func closeTargetsThenPerform(_ action: PowerAction) {
         // 固定本次选项，等待期间修改设置只影响下一次操作。
         let timeoutSeconds = store.terminationTimeoutSeconds
-        let managesWiFi = store.managesWiFi
-        if managesWiFi {
-            if let error = wifiRecovery.storageError {
+        let managesRadios = store.managesRadios
+        if managesRadios {
+            if let error = radioRecovery.storageError {
                 recentStatusText = error
                 rebuildMenu()
                 return
             }
             store.refreshLaunchAtLoginStatus()
             if action != .sleep && !store.launchAtLoginEnabled {
-                recentStatusText = "请先在系统登录项中允许 CloseTargetApp 自启动，以便恢复 Wi-Fi"
+                recentStatusText = "请先在系统登录项中允许 CloseTargetApp 自启动，以便恢复 Wi-Fi 和蓝牙"
                 rebuildMenu()
                 return
             }
         }
         activePowerAction = action
+        powerCommandIssued = false
         recentStatusText = nil
         rebuildMenu()
 
-        Task { @MainActor in
-            if store.targetApplications.isEmpty {
-                recentStatusText = "没有配置目标应用，直接执行\(action.shortTitle)"
-            } else {
-                let result = await TargetApplicationTerminator.close(store.targetApplications, timeoutSeconds: timeoutSeconds)
-                recentStatusText = result.summaryText
-
-                guard result.stillRunningApplications.isEmpty else {
-                    activePowerAction = nil
-                    rebuildMenu()
-                    return
-                }
+        powerActionTask = Task { @MainActor in
+            defer {
+                activePowerAction = nil
+                powerCommandIssued = false
+                powerActionTask = nil
+                rebuildMenu()
             }
-
             do {
-                if managesWiFi {
-                    try await wifiRecovery.prepare(for: action)
-                    try wifiRecovery.markRequestSent()
+                try Task.checkCancellation()
+                if store.targetApplications.isEmpty {
+                    recentStatusText = "没有配置目标应用，直接执行\(action.shortTitle)"
+                } else {
+                    let result = await TargetApplicationTerminator.close(store.targetApplications, timeoutSeconds: timeoutSeconds)
+                    try Task.checkCancellation()
+                    recentStatusText = result.summaryText
+                    guard result.stillRunningApplications.isEmpty else { return }
                 }
+                try Task.checkCancellation()
+                if managesRadios {
+                    try await radioRecovery.prepare(for: action)
+                    try Task.checkCancellation()
+                    try radioRecovery.markRequestSent()
+                }
+                try Task.checkCancellation()
+                powerCommandIssued = true
                 try await PowerActionExecutor.perform(action)
                 recentStatusText = "已发送\(action.title)请求"
             } catch {
+                if Task.isCancelled {
+                    // 已经由系统睡眠接管，不能回滚开网或在开盖后补发软件睡眠命令。
+                    recentStatusText = "系统已进入睡眠，已取消尚未发送的软件电源操作"
+                    return
+                }
                 let failure = "\(action.title)失败：\(error.localizedDescription)"
-                if managesWiFi { await wifiRecovery.rollbackAfterFailure() }
-                recentStatusText = failure + (wifiRecovery.pendingRecord == nil ? "" : "；请点击“恢复 Wi-Fi”重试")
+                if managesRadios { await radioRecovery.rollbackAfterFailure() }
+                recentStatusText = failure + (radioRecovery.pendingRecord == nil ? "" : "；请点击“恢复 Wi-Fi 和蓝牙”重试")
             }
-
-            activePowerAction = nil
-            rebuildMenu()
         }
     }
 
@@ -198,20 +225,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
-        guard activePowerAction == nil, !wifiRecovery.isBusy else { return }
+        guard activePowerAction == nil, !radioRecovery.isBusy else { return }
         Task { @MainActor in
-            if wifiRecovery.pendingRecord != nil {
-                await wifiRecovery.restoreManually()
-                guard wifiRecovery.pendingRecord == nil else { return }
+            if radioRecovery.pendingRecord != nil {
+                await radioRecovery.restoreManually()
+                guard radioRecovery.pendingRecord == nil else { return }
             }
             NSApp.terminate(nil)
         }
     }
 
-    /// 用户主动重试恢复失败的 Wi-Fi；失败时保留菜单入口和持久化凭据。
-    @objc private func restoreWiFi() {
+    /// 用户主动重试恢复失败的无线设备；失败时保留菜单入口和持久化凭据。
+    @objc private func restoreRadios() {
         Task { @MainActor in
-            await wifiRecovery.restoreManually()
+            await radioRecovery.restoreManually()
             rebuildMenu()
         }
     }
