@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 import OSLog
 
-/// 一次无线管理的明确来源；合盖恢复要求开盖，软件操作兼容外接显示器唤醒。
+/// 一次无线管理的明确来源；合盖恢复允许开盖或转入外接屏工作模式，均须正常亮屏唤醒。
 enum RadioSleepTrigger: String, Codable, Sendable {
     /// 软件菜单的睡眠、关机或重启按钮。
     case software
@@ -17,7 +17,7 @@ struct RadioRecoveryRecord: Codable, Sendable {
     let id: UUID
     /// 软件电源动作；合盖也按 sleep 保存。
     let action: PowerAction
-    /// 动作来源决定是否必须开盖才能正常恢复。
+    /// 合盖来源需要开盖或系统允许外接屏合盖工作，软件来源保持原有正常亮屏恢复规则。
     var trigger: RadioSleepTrigger
     /// 本次 Wi-Fi 接口名，不假定接口始终为 en0。
     let interfaceName: String
@@ -195,7 +195,8 @@ final class RadioRecoveryCoordinator {
     /// 只记录合盖状态；实际关闭要等即将睡眠，避免合盖外接显示器继续工作时断网。
     func lidChanged(closed: Bool, causesSleep: Bool) {
         lidPolicy.update(closed: closed, causesSleep: causesSleep)
-        if !closed { restoreIfAwake() }
+        // 接入外接屏后可能保持合盖；策略变化与亮屏通知无论先后到达，都应重新检查恢复。
+        if lidPolicy.permitsUserWake { restoreIfAwake() }
     }
 
     /// 软件操作先保存两个设备原状态，再关闭；失败由调用方回滚并取消电源操作。
@@ -300,10 +301,10 @@ final class RadioRecoveryCoordinator {
         try Task.checkCancellation()
     }
 
-    /// 正常恢复必须有亮屏事件和实时亮屏；合盖来源还必须已经开盖。
+    /// 正常恢复必须有亮屏事件和实时亮屏；合盖来源允许开盖或转入系统认可的合盖工作模式。
     private var canRestoreNormally: Bool {
         recoveryArmed && screenWakeObserved && displayIsAwake()
-            && (pendingRecord?.trigger != .lid || !lidPolicy.closed)
+            && (pendingRecord?.trigger != .lid || lidPolicy.permitsUserWake)
     }
 
     /// 合并重复唤醒事件，后台 DarkWake 不建立恢复任务；关闭总开关也允许完成旧恢复。

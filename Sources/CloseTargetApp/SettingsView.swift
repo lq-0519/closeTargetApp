@@ -33,7 +33,7 @@ struct SettingsView: View {
                 get: { store.managesRadios },
                 set: { store.setManagesRadios($0) }
             ))
-            Text("适用于软件的睡眠、关机、重启及合盖睡眠。开盖闲置自动睡眠不操作；后台唤醒保持关闭，重启后登录恢复。")
+            Text("适用于软件的睡眠、关机、重启及合盖睡眠。合盖外接屏工作时不关闭，睡眠后接外接屏继续使用会恢复；后台唤醒保持关闭，重启后登录恢复。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

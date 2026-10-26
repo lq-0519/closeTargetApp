@@ -18,6 +18,10 @@ struct LidSleepPolicy {
         self.causesSleep = causesSleep
     }
 
+    /// 开盖或系统允许合盖继续工作时，盖子策略不阻止正常唤醒后的恢复。
+    /// 此值不代表电脑已经醒来；调用方仍须检查亮屏事件和显示器状态，排除后台 DarkWake。
+    var permitsUserWake: Bool { !closed || !causesSleep }
+
     /// 物理合盖或关闭外接工作模式才形成请求；开盖立即撤销未进入睡眠的请求。
     mutating func update(closed: Bool, causesSleep: Bool) {
         if closed && causesSleep && (!self.closed || !self.causesSleep) { pendingClose = true }
